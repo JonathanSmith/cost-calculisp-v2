@@ -46,7 +46,6 @@
   proportion-list)
 
 (with-generation ($ENGINE)
-
   ($define entropy (node &optional (dataset (subset node)))
 	   (seq
 	    (receive attribute (attribute node))
