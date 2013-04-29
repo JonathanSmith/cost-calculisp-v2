@@ -6,4 +6,4 @@
     :serial t
     :depends-on (:cost-calc2)
     :components ((:module "minimax"
-			  :components :file "main")))
+			  :components ((:file "main")))))
