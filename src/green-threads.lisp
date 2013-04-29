@@ -13,7 +13,7 @@
   (let ((channel (gensym "CHANNEL"))
 	(chan-name (gensym "CHANNEL-NAME")))
     `(let* ((,chan-name ,(%generate (chan-name $DCHAN) engine))
-	   (,channel (gethash ,chan-name *channels* (make-instance '$CHAN
+	    (,channel (gethash ,chan-name *channels* (make-instance '$CHAN
 								   :name (gensym)
 								   :channel (make-instance 'gt:channel)))))
        (setf (gethash ,chan-name *channels*) ,channel)
@@ -25,7 +25,7 @@
 (defmethod %generate (($SEND $SEND) (engine $GREEN-THREADS-ENGINE))
   `(gt:send/cc
     (channel ,(%generate (channel $SEND) engine))
-    ,(%generate (first (children $SEND)) engine)))
+    ,(%generate (first (children $SEND)) engine) :blockp t))
 
 (defmethod %generate (($PAR $PAR) (engine $GREEN-THREADS-ENGINE))
   (let ((thread (gensym "THREAD"))
@@ -33,27 +33,24 @@
 	(results (gensym "RESULTS"))
 	(children (gensym "CHILDREN"))
 	(child (gensym "CHILD")))
-    `(let ((,threads (list)))
-       (gt:with-green-thread
-	 ,@(mapcar #'(lambda (x)
-		       (if (typep x '$MAP)
-			   `(loop for ,child in (children ,(%generate (first (args x)) engine)) do
-				 (push 
-				  (gt:get-join-future
-				   (gt:with-green-thread				       
-				     (,(fn x) ,child))) ,threads))
-			   `(push 
-			     (gt:get-join-future 
-			      (gt:with-green-thread
-				,(%generate x engine))) ,threads)))
-		   (children $PAR)))
-       (mapcar #'gt:future-values ,threads))))
+    (let ((non-maps (remove-if (lambda (x) (typep x '$MAP)) (children $PAR)))
+	  (maps (remove-if-not (lambda (x) (typep x '$MAP)) (children $PAR))))
+      `(gt:with-green-thread
+	 (let ((,threads (list ,@(mapcar (lambda (x) 
+					   `(gt:with-green-thread
+					      ,(%generate x engine))) non-maps))))
+	   ,@(mapcar #'(lambda (x)		       
+			 `(loop for ,child in (children ,(%generate (first (args x)) engine)) do
+			       (push 				  
+				(gt:with-green-thread				       
+				  (,(fn x) ,child)) ,threads))) maps)
+	   (loop for ,thread in ,threads collect
+		(gt:join-thread ,thread)))))))
 
 (defmethod %generate (($FN $FN) (engine $GREEN-THREADS-ENGINE))
   (if (fn-name $FN)
-      `(defun ,(fn-name $FN) (,@(args $FN))
-	 (cl-cont:with-call/cc
-	 ,@(mapcar #'(lambda (x) (%generate x engine)) (children $FN))))
+      `(cl-cont:defun/cc ,(fn-name $FN) (,@(args $FN))	 
+	 ,@(mapcar #'(lambda (x) (%generate x engine)) (children $FN)))
       `(lambda (,@(args $FN))
 	 (cl-cont:with-call/cc
 	 ,@(mapcar #'(lambda (x) (%generate x engine)) (children $FN))))))
